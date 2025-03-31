@@ -1,0 +1,67 @@
+# Replace this with the actual path to your NHANES-derived data file
+file_path = "your_file_path_here.csv"  # <-- Reader should specify their file path here
+df = pd.read_csv(file_path)
+df.columns = df.columns.str.strip().str.lower()
+
+# Rename and clean 'age' column if needed
+if 'age (years)' in df.columns:
+    df.rename(columns={'age (years)': 'age'}, inplace=True)
+
+df = df[df.isnull().mean(axis=1) < 0.7]
+df = df.fillna(df.median(numeric_only=True))
+df = df[df['age'].between(10, 90)]
+
+# Detect glucose column and assign glycemic groups
+glucose_col = [col for col in df.columns if 'glucose' in col and 'mg/dl' in col][0]
+df['group'] = np.where(df[glucose_col] >= 126, 'Hyperglycemic', 'Normoglycemic')
+
+# Define biomarkers and panel titles
+variables = {
+    "eosinophils number": "Inflammatory regulation",
+    "red cell count si": "Hematopoiesis",
+    "albumin (g/dl)": "Nutritional/Liver reserve",
+    "alt: si (u/l)": "Hepatic stress response",
+    "mchc (g/dl)": "Red cell quality",
+    "creatinine (umol/l)": "Renal resilience"
+}
+
+# Plot group-specific a(t) curves
+import matplotlib.pyplot as plt
+from scipy.interpolate import UnivariateSpline
+
+fig, axes = plt.subplots(2, 3, figsize=(15, 8))
+fig.suptitle("Figure 3 – Group-Specific Aging Velocity a(t)", fontsize=16)
+axes = axes.flatten()
+
+for idx, (var, subtitle) in enumerate(variables.items()):
+    ax = axes[idx]
+    for group, color in zip(['Normoglycemic', 'Hyperglycemic'], ['blue', 'orange']):
+        subset = df[df['group'] == group]
+        subset = subset[['age', var]].dropna()
+        subset = subset[(subset[var] > 0) & (subset[var] < subset[var].quantile(0.99))]
+
+        if subset.empty:
+            continue
+
+        grouped = subset.groupby("age")[var].mean().reset_index()
+        if len(grouped) < 10:
+            continue
+
+        x = grouped['age'].values
+        y = grouped[var].values
+        spline = UnivariateSpline(x, y, s=1)
+        dy = spline.derivative(n=1)(x)
+        a_t = -dy / y
+
+        ax.plot(x, a_t, label=group, color=color, lw=2)
+
+    ax.axhline(0, color='gray', linestyle='--', linewidth=1)
+    ax.set_title(f"({chr(97+idx)}) {subtitle}", loc='left', fontsize=11)
+    ax.set_xlabel("Age (years)")
+    ax.set_ylabel("a(t)")
+    ax.set_xlim(10, 90)
+    ax.grid(True)
+
+fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+plt.legend(loc='upper right')
+plt.show()
