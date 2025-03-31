@@ -1,0 +1,89 @@
+# ✅ Libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.interpolate import UnivariateSpline
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score
+
+# ✅ Load and preprocess
+file_path = "your_file_path_here.csv"  # <-- Reader should insert actual file path
+df = pd.read_csv(file_path)
+df.columns = df.columns.str.strip().str.lower()
+if 'age (years)' in df.columns:
+    df.rename(columns={'age (years)': 'age'}, inplace=True)
+
+df = df.dropna(subset=["age"])
+df = df.fillna(df.median(numeric_only=True))
+
+# ✅ Target biomarkers
+target_vars = {
+    "eosinophils number": "Eosinophils",
+    "red cell count si": "Red Cell Count",
+    "hemoglobin (g/dl)": "Hemoglobin",
+    "albumin (g/dl)": "Albumin",
+    "alt: si (u/l)": "ALT",
+    "mchc (g/dl)": "MCHC",
+    "creatinine (umol/l)": "Creatinine",
+    "total protein (g/dl)": "Total Protein"
+}
+
+# ✅ Extract a(t) as time series
+def extract_at_series(df, var):
+    df_sub = df[["age", var]].dropna()
+    df_sub = df_sub[(df_sub[var] > 0) & (df_sub[var] < df_sub[var].quantile(0.99))]
+    grouped = df_sub.groupby("age")[var].mean().reset_index()
+    if len(grouped) < 10:
+        return None
+    x = grouped["age"].values
+    y = grouped[var].values
+    spline = UnivariateSpline(x, y, s=1)
+    dy = spline.derivative(n=1)(x)
+    a_t = -dy / y
+    return pd.Series(a_t, index=x)
+
+# ✅ Collect a(t) data
+age_index = np.arange(10, 90)
+a_t_df = pd.DataFrame()
+for var, label in target_vars.items():
+    at_series = extract_at_series(df, var)
+    if at_series is not None:
+        aligned = np.interp(age_index, at_series.index, at_series.values)
+        a_t_df[label] = aligned
+
+# ✅ Standardize and cluster
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(a_t_df.T)
+
+# Try different k
+K = range(2, 6)
+scores = []
+for k in K:
+    model = KMeans(n_clusters=k, random_state=42, n_init='auto')
+    labels = model.fit_predict(X_scaled)
+    scores.append(silhouette_score(X_scaled, labels))
+
+best_k = K[np.argmax(scores)]
+model = KMeans(n_clusters=best_k, random_state=42, n_init='auto')
+cluster_labels = model.fit_predict(X_scaled)
+
+# ✅ Visualization
+result_df = pd.DataFrame({"Biomarker": a_t_df.columns, "Cluster": cluster_labels}).sort_values("Cluster")
+display(result_df)
+
+fig, axes = plt.subplots(best_k, 1, figsize=(10, 3 * best_k), sharex=True)
+if best_k == 1:
+    axes = [axes]
+for i in range(best_k):
+    members = result_df[result_df["Cluster"] == i]["Biomarker"]
+    for bio in members:
+        axes[i].plot(age_index, a_t_df[bio], label=bio)
+    axes[i].axhline(0, linestyle="--", color="gray")
+    axes[i].set_title(f"Cluster {i}")
+    axes[i].set_ylabel("a(t)")
+    axes[i].legend()
+    axes[i].grid(True)
+axes[-1].set_xlabel("Age")
+plt.tight_layout()
+plt.show()
