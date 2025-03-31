@@ -1,0 +1,60 @@
+# Replace this with the actual path to your NHANES-derived data file
+file_path = "your_file_path_here.csv"  # <-- Reader should specify their file path here
+df = pd.read_csv(file_path)
+df.columns = df.columns.str.strip().str.lower()
+
+# Rename and clean age column if needed
+if 'age (years)' in df.columns:
+    df.rename(columns={'age (years)': 'age'}, inplace=True)
+
+df = df[df.isnull().mean(axis=1) < 0.7]
+df = df.fillna(df.median(numeric_only=True))
+df = df[df['age'].between(10, 90)]
+
+# Define the glucose thresholds to test
+glucose_thresholds = [126, 120, 115, 110]
+target_var = "triglycerides (mg/dl)"
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.interpolate import UnivariateSpline
+
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+axes = axes.flatten()
+
+for i, threshold in enumerate(glucose_thresholds):
+    ax = axes[i]
+    subset = df[df['glucose, serum (mg/dl)'] >= threshold]
+    subset = subset[['age', target_var]].dropna()
+    subset = subset[(subset[target_var] > 0) & (subset[target_var] < subset[target_var].quantile(0.99))]
+
+    if subset.empty:
+        continue
+
+    grouped = subset.groupby('age')[target_var].mean().reset_index()
+    if len(grouped) < 10:
+        continue
+
+    x = grouped['age'].values
+    y = grouped[target_var].values
+
+    spline = UnivariateSpline(x, y, s=1)
+    dy = spline.derivative(n=1)(x)
+    a_t = -dy / spline(x)
+
+    inf_idx = np.argmax(np.abs(np.gradient(a_t)))
+    inf_age = round(x[inf_idx], 1)
+    a_peak = round(a_t[inf_idx], 2)
+
+    ax.plot(x, a_t, label=f"Glucose ≥ {threshold} mg/dL", lw=2)
+    ax.axvline(inf_age, color='red', linestyle='--', lw=1)
+    ax.axhline(0, color='gray', linestyle='--', lw=1)
+    ax.set_title(f"({chr(97 + i)}) Threshold {threshold} mg/dL\nInflection @ {inf_age} yrs, a(t) = {a_peak}")
+    ax.set_xlabel("Age (years)")
+    ax.set_ylabel("a(t)")
+    ax.grid(True)
+    ax.legend()
+
+fig.suptitle("Figure 5 – Sensitivity of a(t) to Glycemic Thresholds", fontsize=16)
+plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+plt.show()
