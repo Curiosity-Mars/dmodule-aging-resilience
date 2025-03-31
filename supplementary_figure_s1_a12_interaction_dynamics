@@ -1,0 +1,66 @@
+# ✅ Required Libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from google.colab import files
+
+# ✅ Step 1: Upload the A12 data file
+uploaded = files.upload()
+df = pd.read_csv(list(uploaded.keys())[0])  # Example: 'Dmodule_A12_AllPairs.csv'
+
+# ✅ Step 2: Compute summary statistics for each biomarker pair
+summary = []
+for (from_var, to_var), group in df.groupby(["From", "To"]):
+    age = group["Age"].values
+    a12 = group["A12"].values
+    if len(a12) < 10:
+        continue
+
+    max_val = np.nanmax(a12)
+    min_val = np.nanmin(a12)
+    delta = max_val - min_val
+    sign_change = np.any(np.sign(a12[:-1]) != np.sign(a12[1:]))
+
+    summary.append({
+        "From": from_var,
+        "To": to_var,
+        "ΔA12 (Max-Min)": round(delta, 5),
+        "SignChange": sign_change,
+        "MaxA12": round(max_val, 5),
+        "MinA12": round(min_val, 5)
+    })
+
+summary_df = pd.DataFrame(summary)
+summary_df = summary_df.sort_values(by="ΔA12 (Max-Min)", ascending=False)
+
+# ✅ Step 3: Save ranked summary
+csv_out = "/content/A12_Summary_Ranking.csv"
+summary_df.to_csv(csv_out, index=False)
+files.download(csv_out)
+
+# ✅ Step 4: Visualization of top 6 pairs
+print("Now upload both:")
+print(" - A12_Summary_Ranking.csv")
+print(" - Dmodule_A12_AllPairs.csv (if not already uploaded)")
+
+# ✅ Upload both files
+uploaded = files.upload()
+ranking_df = pd.read_csv("A12_Summary_Ranking.csv")
+full_df = pd.read_csv("Dmodule_A12_AllPairs.csv")  # Name must match uploaded file
+
+top_n = 6
+top_pairs = ranking_df.head(top_n)[["From", "To"]].values.tolist()
+
+plt.figure(figsize=(15, 10))
+for i, (from_var, to_var) in enumerate(top_pairs):
+    pair_data = full_df[(full_df["From"] == from_var) & (full_df["To"] == to_var)]
+    plt.subplot(2, 3, i + 1)
+    plt.plot(pair_data["Age"], pair_data["A12"], label=f"{from_var} → {to_var}")
+    plt.axhline(0, color='gray', linestyle='--')
+    plt.title(f"{from_var} → {to_var}")
+    plt.xlabel("Age")
+    plt.ylabel("A₁₂(t)")
+    plt.grid(True)
+
+plt.tight_layout()
+plt.show()
