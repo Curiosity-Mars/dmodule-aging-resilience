@@ -1,0 +1,78 @@
+# ✅ Required Libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.interpolate import UnivariateSpline
+
+# ✅ Load and preprocess dataset
+file_path = "your_file_path_here.csv"  # <-- Reader should replace with local path
+df = pd.read_csv(file_path)
+df.columns = df.columns.str.strip().str.lower()
+if 'age (years)' in df.columns:
+    df.rename(columns={'age (years)': 'age'}, inplace=True)
+
+df = df.dropna(subset=["age", "gender", "body mass index (kg/m**2)", "glucose, serum (mg/dl)"])
+df = df.fillna(df.median(numeric_only=True))
+
+# ✅ Define subgroups
+df["sex"] = df["gender"].map({1: "Male", 2: "Female"})
+df["bmi_group"] = np.where(df["body mass index (kg/m**2)"] >= 30, "BMI ≥ 30", "BMI < 30")
+df["ifg"] = np.where((df["glucose, serum (mg/dl)"] >= 100) & (df["glucose, serum (mg/dl)"] <= 125), "IFG", "Non-IFG")
+
+group_defs = {
+    "Male": df[df["sex"] == "Male"],
+    "Female": df[df["sex"] == "Female"],
+    "BMI ≥ 30": df[df["bmi_group"] == "BMI ≥ 30"],
+    "BMI < 30": df[df["bmi_group"] == "BMI < 30"],
+    "IFG": df[df["ifg"] == "IFG"],
+    "Non-IFG": df[df["ifg"] == "Non-IFG"]
+}
+
+# ✅ Biomarkers to analyze
+target_vars = {
+    "eosinophils number": "Eosinophils",
+    "red cell count si": "Red Cell Count",
+    "hemoglobin (g/dl)": "Hemoglobin",
+    "albumin (g/dl)": "Albumin",
+    "alt: si (u/l)": "ALT",
+    "mchc (g/dl)": "MCHC",
+    "creatinine (umol/l)": "Creatinine",
+    "total protein (g/dl)": "Total Protein"
+}
+
+# ✅ Compute a(t)
+def compute_at_values(df_sub, var):
+    df_sub = df_sub[(df_sub[var] > 0) & (df_sub[var] <= df_sub[var].quantile(0.99))]
+    grouped = df_sub.groupby("age")[var].mean().reset_index()
+    if len(grouped) < 5:
+        return []
+    x = grouped["age"].values
+    y = grouped[var].values
+    spline = UnivariateSpline(x, y, s=1)
+    dy = spline.derivative(n=1)(x)
+    at = -dy / y
+    return at
+
+# ✅ Plot results in 4×2 layout
+fig, axes = plt.subplots(4, 2, figsize=(16, 16))
+axes = axes.flatten()
+
+for idx, (var, label) in enumerate(target_vars.items()):
+    at_values = {group: compute_at_values(sub, var) for group, sub in group_defs.items()}
+    ax = axes[idx]
+    for group, at in at_values.items():
+        if len(at) > 0:
+            ax.plot(at, label=group)
+    ax.axhline(0, color='gray', linestyle='--')
+    ax.set_title(label)
+    ax.set_xlabel("Age Index")
+    ax.set_ylabel("a(t)")
+    ax.grid(True)
+    ax.legend(fontsize=8)
+
+# Hide extra axes if fewer than 8 panels
+for j in range(idx + 1, len(axes)):
+    axes[j].axis("off")
+
+plt.tight_layout()
+plt.show()
